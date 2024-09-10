@@ -1,0 +1,269 @@
+package main
+
+import (
+	"bufio"
+	"fmt"
+	"net"
+	"os"
+	"strings"
+	"sync"
+	"time"
+
+	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/app"
+	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/widget"
+	"github.com/getlantern/systray"
+)
+
+type User struct {
+	Addr string
+	Name string
+}
+
+var (
+	users      = make(map[string]User)
+	mutex      = &sync.Mutex{}
+	chatLog    *widget.Entry
+	input      *widget.Entry
+	usersList  *widget.List
+	username   = "User-" + generateRandomID()
+	broadcast  = "192.168.10.255:9999"
+	localPort  = ":9999"
+	tcpPort    = ":8080"
+	selectedIP string
+	myApp      fyne.App
+	myWindow   fyne.Window
+)
+
+func main() {
+	myApp = app.NewWithID("com.example.chat")
+	myWindow = myApp.NewWindow("P2PChat")
+
+	chatLog = widget.NewMultiLineEntry()
+	input = widget.NewEntry()
+	input.SetPlaceHolder("Type your message here...")
+
+	usersList = widget.NewList(
+		func() int {
+			return len(users)
+		},
+		func() fyne.CanvasObject {
+			return widget.NewLabel("User")
+		},
+		func(i int, item fyne.CanvasObject) {
+			mutex.Lock()
+			defer mutex.Unlock()
+			keys := make([]string, 0, len(users))
+			for k := range users {
+				keys = append(keys, k)
+			}
+			user := users[keys[i]]
+			item.(*widget.Label).SetText(user.Name + " (" + user.Addr + ")")
+		})
+
+	usersList.OnSelected = func(id widget.ListItemID) {
+		mutex.Lock()
+		defer mutex.Unlock()
+		keys := make([]string, 0, len(users))
+		for k := range users {
+			keys = append(keys, k)
+		}
+		selectedIP = keys[id]
+	}
+
+	sendButton := widget.NewButton("Send", func() {
+		message := input.Text
+		if message != "" && selectedIP != "" {
+			sendMessage(selectedIP, message)
+			input.SetText("")
+		} else {
+			dialog.ShowInformation("Error", "Please select a user and enter a message", myWindow)
+		}
+	})
+
+	// Use container.NewScroll to allow for scrolling if the list is too long
+	userListContainer := container.NewScroll(usersList)
+	userListContainer.SetMinSize(fyne.NewSize(300, 300)) // Set minimum size for the list
+
+	content := container.NewVBox(
+		userListContainer,
+		chatLog,
+		input,
+		sendButton,
+	)
+	myWindow.SetContent(content)
+	//myWindow.Resize(fyne.NewSize(400, 600))
+
+	// Start UDP broadcasting and listening
+	go startBroadcasting()
+	go listenForBroadcasts()
+
+	// Start TCP server for direct messaging
+	go startTCPServer()
+
+	go systray.Run(onReady, onExit)
+	myApp.Run()
+}
+
+func onReady() {
+	iconData, err := os.ReadFile("icon.ico") // Load your icon file here
+	if err != nil {
+		fmt.Println("Error loading icon:", err)
+		return
+	}
+
+	systray.SetIcon(iconData)
+	systray.SetTitle("IPMsg Chat")
+	systray.SetTooltip("IP Messenger-like chat")
+
+	mShow := systray.AddMenuItem("Show", "Show the chat window")
+	mQuit := systray.AddMenuItem("Quit", "Quit the whole app")
+
+	go func() {
+		for {
+			select {
+			case <-mShow.ClickedCh:
+				myWindow.Show()
+			case <-mQuit.ClickedCh:
+				systray.Quit()
+				myApp.Quit()
+				return
+			}
+		}
+	}()
+}
+
+func onExit() {
+	// Clean up here if necessary
+}
+
+// Broadcast presence to the network
+func startBroadcasting() {
+	addr, err := net.ResolveUDPAddr("udp", broadcast)
+	if err != nil {
+		fmt.Println("Error resolving UDP address:", err)
+		return
+	}
+
+	conn, err := net.DialUDP("udp", nil, addr)
+	if err != nil {
+		fmt.Println("Error dialing UDP:", err)
+		return
+	}
+	defer conn.Close()
+
+	for {
+		message := username + "@" + tcpPort
+		_, err := conn.Write([]byte(message))
+		if err != nil {
+			fmt.Println("Error broadcasting:", err)
+		}
+		time.Sleep(5 * time.Second)
+	}
+}
+
+// Listen for broadcasts from other users
+func listenForBroadcasts() {
+	addr, err := net.ResolveUDPAddr("udp", localPort)
+	if err != nil {
+		fmt.Println("Error resolving UDP address:", err)
+		return
+	}
+
+	conn, err := net.ListenUDP("udp", addr)
+	if err != nil {
+		fmt.Println("Error listening on UDP:", err)
+		return
+	}
+	defer conn.Close()
+
+	buffer := make([]byte, 1024)
+	for {
+		n, remoteAddr, err := conn.ReadFromUDP(buffer)
+		if err != nil {
+			fmt.Println("Error reading from UDP:", err)
+			continue
+		}
+
+		data := strings.Split(string(buffer[:n]), "@")
+		if len(data) != 2 {
+			continue
+		}
+
+		name := data[0]
+		tcpAddress := remoteAddr.IP.String() + data[1]
+
+		mutex.Lock()
+		users[tcpAddress] = User{
+			Addr: tcpAddress,
+			Name: name,
+		}
+		mutex.Unlock()
+
+		usersList.Refresh()
+	}
+}
+
+// Start TCP server for receiving direct messages
+func startTCPServer() {
+	listener, err := net.Listen("tcp", tcpPort)
+	if err != nil {
+		fmt.Println("Error starting TCP server:", err)
+		return
+	}
+	defer listener.Close()
+
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			fmt.Println("Error accepting connection:", err)
+			continue
+		}
+		go handleTCPConnection(conn)
+	}
+}
+
+// Handle incoming TCP connections
+func handleTCPConnection(conn net.Conn) {
+	defer conn.Close()
+	reader := bufio.NewReader(conn)
+	message, err := reader.ReadString('\n')
+	if err != nil {
+		fmt.Println("Error reading from connection:", err)
+		return
+	}
+	displayMessage(message)
+	// Show notification for incoming message
+	myApp.SendNotification(&fyne.Notification{
+		Title:   "New Message",
+		Content: message,
+	})
+}
+
+// Send message to selected user
+func sendMessage(addr, message string) {
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		fmt.Println("Error connecting to peer:", err)
+		return
+	}
+	defer conn.Close()
+
+	writer := bufio.NewWriter(conn)
+	writer.WriteString(message + "\n")
+	writer.Flush()
+
+	displayMessage("Me: " + message)
+}
+
+// Display a message in the chat log
+func displayMessage(message string) {
+	chatLog.SetText(message + "\n")
+}
+
+// Generate a random ID for the username
+func generateRandomID() string {
+	return fmt.Sprintf("%d", time.Now().UnixNano())
+}

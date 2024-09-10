@@ -1,0 +1,6 @@
+[Details]
+  Icon = "icon.png"
+  Name = "MyChat.exe"
+  ID = "com.wimbot.app"
+  Version = "1.0.0"
+  Build = 219
