@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"fmt"
 	"net"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -13,8 +12,8 @@ import (
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/widget"
-	"github.com/getlantern/systray"
 )
 
 type User struct {
@@ -87,6 +86,21 @@ func main() {
 	userListContainer := container.NewScroll(usersList)
 	userListContainer.SetMinSize(fyne.NewSize(300, 300)) // Set minimum size for the list
 
+	if desk, ok := myApp.(desktop.App); ok {
+		m := fyne.NewMenu("MyApp",
+			fyne.NewMenuItem("Show", func() {
+				myWindow.Show()
+			}))
+		desk.SetSystemTrayMenu(m)
+
+		iconData, err := fyne.LoadResourceFromPath("icon.ico") // Load your icon file here
+		if err != nil {
+			fmt.Println("Error loading icon:", err)
+			return
+		}
+		desk.SetSystemTrayIcon(iconData)
+	}
+
 	content := container.NewVBox(
 		userListContainer,
 		chatLog,
@@ -94,7 +108,9 @@ func main() {
 		sendButton,
 	)
 	myWindow.SetContent(content)
-	//myWindow.Resize(fyne.NewSize(400, 600))
+	myWindow.SetCloseIntercept(func() {
+		myWindow.Hide()
+	})
 
 	// Start UDP broadcasting and listening
 	go startBroadcasting()
@@ -103,40 +119,7 @@ func main() {
 	// Start TCP server for direct messaging
 	go startTCPServer()
 
-	go systray.Run(onReady, onExit)
 	myApp.Run()
-}
-
-func onReady() {
-	iconData, err := os.ReadFile("icon.ico") // Load your icon file here
-	if err != nil {
-		fmt.Println("Error loading icon:", err)
-		return
-	}
-
-	systray.SetIcon(iconData)
-	systray.SetTitle("IPMsg Chat")
-	systray.SetTooltip("IP Messenger-like chat")
-
-	mShow := systray.AddMenuItem("Show", "Show the chat window")
-	mQuit := systray.AddMenuItem("Quit", "Quit the whole app")
-
-	go func() {
-		for {
-			select {
-			case <-mShow.ClickedCh:
-				myWindow.Show()
-			case <-mQuit.ClickedCh:
-				systray.Quit()
-				myApp.Quit()
-				return
-			}
-		}
-	}()
-}
-
-func onExit() {
-	// Clean up here if necessary
 }
 
 // Broadcast presence to the network
