@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"net"
+	"os/user"
 	"strings"
 	"sync"
 	"time"
@@ -28,7 +29,7 @@ var (
 	chatLogView *widget.List
 	input       *widget.Entry
 	usersList   *widget.List
-	username    = "User-" + generateRandomID()
+	username    = ""
 	broadcast   = "192.168.10.255:9999"
 	localPort   = ":9999"
 	tcpPort     = ":8080"
@@ -40,6 +41,13 @@ var (
 )
 
 func main() {
+	currentUser, err := user.Current()
+	if err != nil {
+		fmt.Println("Error getting current user:", err)
+		return
+	}
+	username = currentUser.Username
+
 	myApp = app.NewWithID("com.wimbot.app")
 	myWindow = myApp.NewWindow("P2PChat")
 
@@ -232,7 +240,7 @@ func handleTCPConnection(conn net.Conn) {
 		return
 	}
 	displayMessage(message)
-	// Show notification for incoming message
+
 	myApp.SendNotification(&fyne.Notification{
 		Title:   "New Message",
 		Content: message,
@@ -264,9 +272,4 @@ func displayMessage(message string) {
 		chatList.Set(existing[1:])
 	}
 	chatList.Append(message)
-}
-
-// Generate a random ID for the username
-func generateRandomID() string {
-	return fmt.Sprintf("%d", time.Now().UnixNano())
 }
