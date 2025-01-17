@@ -11,7 +11,7 @@ This supports MacOS, Windows, Linux, and Mobile(Android, iOS) platforms.
 - [Install Fyne](https://docs.fyne.io/started/)
 
 ## Build mobile
-` fyne package -os android -appID com.chat.app -icon icon.ico`
+`fyne package -os android -appID com.chat.app -icon icon.ico`
 
 `fyne package -os ios -appID com.chat.app -icon icon.ico`
 
