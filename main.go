@@ -11,6 +11,7 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/data/binding"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/widget"
@@ -22,27 +23,41 @@ type User struct {
 }
 
 var (
-	users      = make(map[string]User)
-	mutex      = &sync.Mutex{}
-	chatLog    *widget.Entry
-	input      *widget.Entry
-	usersList  *widget.List
-	username   = "User-" + generateRandomID()
-	broadcast  = "192.168.10.255:9999"
-	localPort  = ":9999"
-	tcpPort    = ":8080"
-	selectedIP string
-	myApp      fyne.App
-	myWindow   fyne.Window
+	users       = make(map[string]User)
+	mutex       = &sync.Mutex{}
+	chatLogView *widget.List
+	input       *widget.Entry
+	usersList   *widget.List
+	username    = "User-" + generateRandomID()
+	broadcast   = "192.168.10.255:9999"
+	localPort   = ":9999"
+	tcpPort     = ":8080"
+	selectedIP  string
+	myApp       fyne.App
+	myWindow    fyne.Window
+
+	chatList binding.StringList
 )
 
 func main() {
-	myApp = app.NewWithID("com.example.chat")
+	myApp = app.NewWithID("com.wimbot.app")
 	myWindow = myApp.NewWindow("P2PChat")
 
-	chatLog = widget.NewMultiLineEntry()
+	//init chat history
+	chatList = binding.NewStringList()
+
 	input = widget.NewEntry()
 	input.SetPlaceHolder("Type your message here...")
+
+	chatLogView = widget.NewListWithData(chatList,
+		func() fyne.CanvasObject {
+			return widget.NewLabel("template")
+		},
+		func(i binding.DataItem, o fyne.CanvasObject) {
+			o.(*widget.Label).Bind(i.(binding.String))
+		})
+
+	chatLogContainer := container.NewGridWrap(fyne.NewSize(300, 300), chatLogView)
 
 	usersList = widget.NewList(
 		func() int {
@@ -82,9 +97,8 @@ func main() {
 		}
 	})
 
-	// Use container.NewScroll to allow for scrolling if the list is too long
 	userListContainer := container.NewScroll(usersList)
-	userListContainer.SetMinSize(fyne.NewSize(300, 300)) // Set minimum size for the list
+	userListContainer.SetMinSize(fyne.NewSize(300, 200))
 
 	if desk, ok := myApp.(desktop.App); ok {
 		m := fyne.NewMenu("MyApp",
@@ -93,7 +107,7 @@ func main() {
 			}))
 		desk.SetSystemTrayMenu(m)
 
-		iconData, err := fyne.LoadResourceFromPath("icon.ico") // Load your icon file here
+		iconData, err := fyne.LoadResourceFromPath("icon.ico")
 		if err != nil {
 			fmt.Println("Error loading icon:", err)
 			return
@@ -103,7 +117,7 @@ func main() {
 
 	content := container.NewVBox(
 		userListContainer,
-		chatLog,
+		chatLogContainer,
 		input,
 		sendButton,
 	)
@@ -243,7 +257,13 @@ func sendMessage(addr, message string) {
 
 // Display a message in the chat log
 func displayMessage(message string) {
-	chatLog.SetText(message + "\n")
+	length := chatList.Length()
+	if length >= 100 {
+		// Remove the first element by setting a new slice without it
+		existing, _ := chatList.Get()
+		chatList.Set(existing[1:])
+	}
+	chatList.Append(message)
 }
 
 // Generate a random ID for the username
